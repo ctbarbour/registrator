@@ -1,0 +1,17 @@
+{application, 'registrator',
+  [{description, "Registrator"},
+   {registered, []},
+   {vsn, "0.0.1"},
+   {mod, {registrator_app, []}},
+   {applications,
+     [kernel,
+      stdlib,
+      dns,
+      nkdocker
+     ]},
+   {env, []},
+   {modules, []},
+   {contributors, []},
+   {licenses, []},
+   {links, []}
+ ]}.

@@ -1,0 +1,45 @@
+2015-12-17 00:45:41,047 CRIT Supervisor running as root (no user in config file)
+2015-12-17 00:45:41,051 INFO supervisord started with pid 1
+2015-12-17 00:45:42,054 INFO spawned: 'registrator' with pid 7
+2015-12-17 00:45:42,055 INFO spawned: 'socat' with pid 8
+2015-12-17 00:45:42,207 CRIT reaped unknown pid 55)
+2015-12-17 00:45:42,265 CRIT reaped unknown pid 59)
+2015-12-17 00:45:42,909 CRIT reaped unknown pid 84)
+2015-12-17 00:45:43,992 INFO success: registrator entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2015-12-17 00:45:43,992 INFO success: socat entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2015-12-17 00:58:05,536 WARN received SIGTERM indicating exit request
+2015-12-17 00:58:05,536 INFO waiting for registrator, socat to die
+2015-12-17 00:58:05,538 INFO stopped: socat (terminated by SIGTERM)
+2015-12-17 00:58:05,540 CRIT reaped unknown pid 86)
+2015-12-17 00:58:05,540 INFO stopped: registrator (terminated by SIGTERM)
+2015-12-17 00:58:05,541 CRIT reaped unknown pid 85)
+2015-12-17 01:03:29,883 CRIT Supervisor running as root (no user in config file)
+2015-12-17 01:03:29,889 INFO supervisord started with pid 1
+2015-12-17 01:03:30,893 INFO spawned: 'registrator' with pid 7
+2015-12-17 01:03:30,895 INFO spawned: 'socat' with pid 8
+2015-12-17 01:03:31,059 CRIT reaped unknown pid 55)
+2015-12-17 01:03:31,111 CRIT reaped unknown pid 59)
+2015-12-17 01:03:31,751 CRIT reaped unknown pid 84)
+2015-12-17 01:03:32,845 INFO success: registrator entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2015-12-17 01:03:32,845 INFO success: socat entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2015-12-17 01:06:22,286 WARN received SIGTERM indicating exit request
+2015-12-17 01:06:22,286 INFO waiting for registrator, socat to die
+2015-12-17 01:06:22,287 INFO stopped: socat (terminated by SIGTERM)
+2015-12-17 01:06:22,290 INFO stopped: registrator (terminated by SIGTERM)
+2015-12-17 01:06:22,291 CRIT reaped unknown pid 86)
+2015-12-17 01:06:22,292 CRIT reaped unknown pid 85)
+2015-12-17 01:06:38,154 CRIT Supervisor running as root (no user in config file)
+2015-12-17 01:06:38,159 INFO supervisord started with pid 1
+2015-12-17 01:06:39,163 INFO spawned: 'registrator' with pid 7
+2015-12-17 01:06:39,165 INFO spawned: 'socat' with pid 8
+2015-12-17 01:06:39,325 CRIT reaped unknown pid 55)
+2015-12-17 01:06:39,375 CRIT reaped unknown pid 59)
+2015-12-17 01:06:40,028 CRIT reaped unknown pid 84)
+2015-12-17 01:06:41,120 INFO success: registrator entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2015-12-17 01:06:41,120 INFO success: socat entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2015-12-17 01:08:06,524 WARN received SIGTERM indicating exit request
+2015-12-17 01:08:06,524 INFO waiting for registrator, socat to die
+2015-12-17 01:08:06,527 INFO stopped: socat (terminated by SIGTERM)
+2015-12-17 01:08:06,530 CRIT reaped unknown pid 85)
+2015-12-17 01:08:06,530 CRIT reaped unknown pid 86)
+2015-12-17 01:08:06,530 INFO stopped: registrator (terminated by SIGTERM)
