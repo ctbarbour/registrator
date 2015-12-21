@@ -13,14 +13,14 @@ of a registered service.
 ## Running Registrator
 
 The quickest way to see Registrator in action is running locally with
-(docker-machine)[https://docs.docker.com/machine/]. Typically, running
+[docker-machine](https://docs.docker.com/machine/). Typically, running
 Registrator looks like this:
 
     $ docker run -d \
-        --name=registrator \
-	--volume=/var/run/docker.sock:/tmp/docker.sock
-	-p 5555:5555/udp \
-	barbct5/registrator:latest
+      	     --name=registrator \
+	     --volume=/var/run/docker.sock:/tmp/docker.sock \
+	     -p 5555:5555/udp \
+	     barbct5/registrator:latest
 
 First we run the container detached and name it `registrator`. We also mount
 the Docker socket inside in the container so the Registrator service can listen
@@ -77,8 +77,8 @@ connect via the cli:
 We use rebar3 as the standard build tool for Registrator. To compile and build
 a release:
 
-  $ ./rebar3 release
+    $ ./rebar3 release
 
 We can build a Docker image:
 
-   $ docker build --tag registrator:latest .
+    $ docker build --tag registrator:latest .
