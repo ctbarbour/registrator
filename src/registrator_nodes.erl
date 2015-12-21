@@ -2,7 +2,7 @@
 
 -behavior(gen_server).
 
--export([start_link/0, register/1, register/5, lookup/0, lookup/1, lookup/2,
+-export([start_link/0, register/1, lookup/0, lookup/1, lookup/2,
 	 unregister/1]).
 -export([init/1, handle_call/3, handle_info/2, handle_cast/2, code_change/3,
 	 terminate/2]).
@@ -14,14 +14,6 @@ start_link() ->
 
 register(Service) when is_map(Service) ->
     gen_server:call(?MODULE, {register, Service}).
-
-register(Id, Service, Protocol, Target, Port) ->
-    Node = [#{id => Id,
-	      address => Target,
-	      port => Port,
-	      service => Service,
-	      protocol => Protocol}],
-    gen_server:call(?MODULE, {register, Node}).
 
 unregister(Id) ->
     gen_server:call(?MODULE, {unregister, Id}).

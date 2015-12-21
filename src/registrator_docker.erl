@@ -1,10 +1,8 @@
 -module(registrator_docker).
 
--behavior(gen_server).
-
 -export([start_link/2]).
--export([init/1, handle_call/3, handle_cast/2, handle_info/2, code_change/3,
-	 terminate/2]).
+-export([init/3, state_from_opts/2, system_continue/3, system_terminate/4,
+	system_code_change/4]).
 
 -record(dead_container, {
 	  id  :: binary(),
@@ -23,11 +21,14 @@
 -type service_port() :: #service_port{}.
 
 -record(state, {
+	  parent               :: pid(),
 	  docker               :: pid(),
-	  ref                  :: reference(),
+	  docker_opts          :: maps:map(),
+	  event_ref            :: reference(),
 	  dead_containers = [] :: [dead_container()],
-	  tref                 :: reference(),
+	  refresh_ref          :: reference(),
 	  refresh_ttl = 30000  :: pos_integer(),
+	  connection_retries = 3 :: pos_integer(),
 	  advertise            :: inet:ip_address()
 	 }).
 
@@ -36,57 +37,104 @@
 start_link(Opts, DockerOpts) when is_list(DockerOpts) ->
     start_link(Opts, maps:from_list(DockerOpts));
 start_link(Opts, DockerOpts) when is_map(DockerOpts) ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [Opts, DockerOpts], []).
+    proc_lib:start_link(?MODULE, init,
+			[self(), Opts, DockerOpts]).
 
 state_from_opts([], State) ->
     State;
 state_from_opts([{advertise, Value} | Opts], State) ->
     state_from_opts(Opts, State#state{advertise=Value});
 state_from_opts([{refresh_ttl, Value} | Opts], State) ->
-    state_from_opts(Opts, State#state{refresh_ttl=Value}).
+    state_from_opts(Opts, State#state{refresh_ttl=Value});
+state_from_opts([{connection_retries, Value} | Opts], State) ->
+    state_from_opts(Opts, State#state{connection_retries=Value}).
 
 send_refresh(State) ->
     #state{refresh_ttl=Ttl} = State,
-    timer:send_after(Ttl, refresh).
+    erlang:send_after(Ttl, self(), refresh).
 
-init([Opts, DockerOpts]) ->
-    process_flag(trap_exit, true),
+init(Parent, Opts, DockerOpts) ->
+    ok = proc_lib:init_ack(Parent, {ok, self()}),
+    ok = error_logger:info_msg("Parent: ~p", [Parent]),
     State = state_from_opts(Opts, #state{}),
-    try
-	{ok, Docker} = nkdocker:start_link(DockerOpts),
-	{async, Ref} = nkdocker:events(Docker, #{
-					 filters => #{
-					   event => [start, stop, die, kill]}}),
-	{ok, TRef} = send_refresh(State),
-	{ok, State#state{docker=Docker, ref=Ref, tref=TRef}}
-    catch Error:Reason ->
-	    erlang:display(erlang:get_stacktrace()),
-	    {stop, {Error, Reason}}
+    connect(State#state{parent=Parent, docker_opts=DockerOpts},
+	    State#state.connection_retries).
+
+connect(State, Retries) ->
+    #state{docker_opts=DockerOpts} = State,
+    case nkdocker:start_link(DockerOpts) of
+	{ok, Docker} ->
+	    Filter = #{filters => #{event => [start, stop, die, kill]}},
+	    {async, EventRef} = nkdocker:events(Docker, Filter),
+	    before_loop(State#state{docker=Docker, event_ref=EventRef});
+	{error, Reason} ->
+	    ok = error_logger:error_msg("Error connection: ~w~n", [Reason]),
+	    retry(State, Retries)
     end.
 
-handle_call(_Msg, _From, State) ->
-    {noreply, State}.
+before_loop(State) ->
+    NewState = sync(State),
+    RefreshRef = send_refresh(NewState),
+    loop(State#state{refresh_ref=RefreshRef}).
 
-handle_cast(_Msg, State) ->
-    {noreply, State}.
+retry(_State, 0) ->
+    ok;
+retry(#state{refresh_ref=RefreshRef} = State, Retries)
+  when is_reference(RefreshRef) ->
+    _ = erlang:cancel_timer(RefreshRef),
+    receive
+	refresh ->
+	    ok
+    after 0 ->
+	    ok
+    end,
+    retry_loop(State#state{refresh_ref=undefined}, Retries);
+retry(State, Retries) ->
+    retry_loop(State, Retries).
 
-handle_info(refresh, State) ->
-    #state{dead_containers = DeadContainers, refresh_ttl=Ttl} = State,
-    NewDeadContainers = filter_dead_containers(DeadContainers, Ttl),
-    _ = sync(State),
-    {ok, TRef} = send_refresh(State),
-    {noreply, State#state{dead_containers=NewDeadContainers, tref=TRef}};
-handle_info({nkdocker, Ref, {data, Event}}, #state{ref=Ref} = State) ->
-    NewState = handle_event(Event, State),
-    {noreply, NewState};
-handle_info(_Info, State) ->
-    {noreply, State}.
+retry_loop(_State, 0) ->
+    error(gone);
+retry_loop(State, Retries) ->
+    #state{parent=Parent} = State,
+    _ = erlang:send_after(5000, self(), retry),
+    receive
+	retry ->
+	    connect(State, Retries - 1);
+	{system, From, Request} ->
+	    sys:handle_system_msg(Request, From, Parent, ?MODULE, [],
+				  {retry_loop, State, Retries})
+    end.
 
-code_change(_OldVsn, State, _Extra) ->
-    {ok, State}.
+loop(State) ->
+    #state{docker=Docker, event_ref=EventRef} = State,
+    receive
+	refresh ->
+	    #state{dead_containers = DeadContainers, refresh_ttl=Ttl} = State,
+	    NewDeadContainers = filter_dead_containers(DeadContainers, Ttl),
+	    _ = sync(State),
+	    RefreshRef = send_refresh(State),
+	    loop(State#state{refresh_ref=RefreshRef,
+			     dead_containers=NewDeadContainers});
+	{nkdocker, EventRef, {data, Event}} ->
+	    loop(handle_event(Event, State));
+	{'EXIT', Docker, Reason} ->
+	    down(State, Reason);
+	{system, From, Request} ->
+	    #state{parent=Parent} = State,
+	    sys:handle_system_msg(Request, From, Parent, ?MODULE, [],
+				  {loop, State});
+	Any ->
+	    error_logger:error_msg("Unexpected message: ~w~n", [Any]),
+	    loop(State)
+    end.
 
-terminate(_Reason, _State) ->
-    ok.
+down(State, shutdown) ->
+    loop(State#state{docker=undefined});
+down(State, normal) ->
+    loop(State#state{docker=undefined});
+down(State, _Reason) ->
+    #state{connection_retries=Retries} = State,
+    retry(State#state{docker=undefined}, Retries).
 
 sync(State) ->
     #state{docker=Docker} = State,
@@ -261,3 +309,14 @@ did_exit_cleanly({ok, #{<<"State">> := ContainerState}}) ->
     end;
 did_exit_cleanly({error, {not_found, _Reason}}) ->
     false.
+
+system_continue(_, _, {retry_loop, State, Retry}) ->
+    retry_loop(State, Retry);
+system_continue(_, _, {loop, State}) ->
+    loop(State).
+
+system_terminate(Reason, _, _, _) ->
+    exit(Reason).
+
+system_code_change(Misc, _, _, _) ->
+    {ok, Misc}.
