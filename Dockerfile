@@ -1,4 +1,4 @@
-FROM voidlock/erlang:18.1.3-onbuild
+FROM voidlock/erlang:18.2.2-onbuild
 
 RUN apt-get update -qq -y && \
     apt-get install -qq -y socat supervisor && \
@@ -10,7 +10,7 @@ ADD ./scripts/supervisord-socat.conf /etc/supervisor/conf.d/supervisord-socat.co
 
 RUN chmod 755 /*.sh
 
-EXPOSE 5555/udp
+EXPOSE 5555/udp 5000/udp
 
 VOLUME /root/.cache
 VOLUME /usr/src/app/_build

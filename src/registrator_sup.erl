@@ -12,30 +12,32 @@ init([]) ->
 		 {registrator_dns_server, start_link, []},
 		 permanent, 5000, worker, [registrator_dns_server]},
     Nodes = {registrator_nodes,
-	     {registrator_nodes, start_link, []},
+	     {registrator_nodes, start_link, swim_opts()},
 	     permanent, 5000, worker, [registrator_nodes]},
 
-    DockerOpts = case application:get_env(registrator, docker) of
-		    undefined ->
-			#{};
-		    {ok, Value} ->
-			Value
-		end,
     Opts = registrator_docker_opts(),
+    DockerOpts = application:get_all_env(nkdocker),
     Docker = {registrator_docker,
 	      {registrator_docker, start_link, [Opts, DockerOpts]},
 	      permanent, 5000, worker, [registrator_docker]},
     {ok, {{one_for_one, 5, 10}, [DNSServer, Nodes, Docker]}}.
 
-registrator_docker_opts() ->
-    registrator_docker_opts([advertise, refresh_ttl], []).
+swim_opts() ->
+    {ok, Actor} = application:get_env(registrator, actor),
+    [Actor, application:get_env(swim, groups, [])].
 
-registrator_docker_opts([], Acc) ->
+registrator_docker_opts() ->
+    get_opts([advertise, refresh_ttl]).
+
+get_opts(Keys) ->
+    get_opts(Keys, []).
+
+get_opts([], Acc) ->
     Acc;
-registrator_docker_opts([Opt | Rest], Acc) ->
+get_opts([Opt | Rest], Acc) ->
     case application:get_env(registrator, Opt) of
 	undefined ->
-	    registrator_docker_opts(Rest, Acc);
+	    get_opts(Rest, Acc);
 	{ok, Value} ->
 	    [{Opt, Value} | Acc]
     end.

@@ -44,7 +44,8 @@ start_link(Opts, DockerOpts) when is_map(DockerOpts) ->
 state_from_opts([], State) ->
     State;
 state_from_opts([{advertise, Value} | Opts], State) ->
-    state_from_opts(Opts, State#state{advertise=Value});
+    Ip = parse_ip(Value),
+    state_from_opts(Opts, State#state{advertise=Ip});
 state_from_opts([{refresh_ttl, Value} | Opts], State) ->
     state_from_opts(Opts, State#state{refresh_ttl=Value});
 state_from_opts([{connection_retries, Value} | Opts], State) ->
@@ -61,7 +62,7 @@ init([Opts, DockerOpts]) ->
     {async, EventRef} = nkdocker:events(Docker, Filter),
     NewState = sync(State#state{docker=Docker}),
     RefreshRef = send_refresh(NewState),
-    {ok, State#state{refresh_ref=RefreshRef, event_ref=EventRef}}.
+    {ok, NewState#state{refresh_ref=RefreshRef, event_ref=EventRef}}.
 
 handle_call(_Msg, _From, State) ->
     {noreply, State}.
@@ -82,11 +83,14 @@ handle_info(_Info, State) ->
     {noreply, State}.
 
 sync(State) ->
-    #state{docker=Docker} = State,
+    #state{docker=Docker, advertise=Advertise} = State,
     {ok, Containers} = nkdocker:ps(Docker),
+    Services = lists:filter(fun(#{address := Address}) ->
+				       Address =:= Advertise
+			       end, registrator_nodes:lookup()),
     RegisteredNodes = lists:foldl(fun(#{id := Id}, Acc) ->
 					  sets:add_element(Id, Acc)
-				  end, sets:new(), registrator_nodes:lookup()),
+				  end, sets:new(), Services),
     RunningContainers = lists:foldl(fun(#{<<"Id">> := Id}, Acc) ->
 					    sets:add_element(Id, Acc)
 				    end, sets:new(), Containers),
@@ -183,7 +187,9 @@ parse_ip(MaybeIp) when is_binary(MaybeIp) ->
     parse_ip(binary_to_list(MaybeIp));
 parse_ip(MaybeIp) when is_list(MaybeIp) ->
     {ok, Ip} = inet_parse:address(MaybeIp),
-    Ip.
+    Ip;
+parse_ip(MaybeIp) when is_tuple(MaybeIp) ->
+    MaybeIp.
 
 parse_port(Port) when is_binary(Port) ->
     binary_to_integer(Port);
