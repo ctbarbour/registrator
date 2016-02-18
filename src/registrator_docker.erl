@@ -148,10 +148,22 @@ add(ContainerId, State) ->
 	  end, Services),
     State#state{dead_containers = NewDeadContainers}.
 
+fetch_port_bindings(#{<<"HostConfig">> := #{<<"PortBindings">> := null}}) ->
+    #{};
+fetch_port_bindings(#{<<"HostConfig">> := #{<<"PortBindings">> := PortBindings}})
+  when is_map(PortBindings) ->
+    PortBindings.
+
+fetch_ports(#{<<"NetworkSettings">> := #{<<"Ports">> := null}}) ->
+    #{};
+fetch_ports(#{<<"NetworkSettings">> := #{<<"Ports">> := Ports}})
+  when is_map(Ports) ->
+    Ports.
+
 -spec service_ports(maps:map(), state()) -> [service_port()].
 service_ports(Container, State) ->
-    #{<<"HostConfig">> := #{<<"PortBindings">> := PortBindings}} = Container,
-    #{<<"NetworkSettings">> := #{<<"Ports">> := Ports}} = Container,
+    PortBindings = fetch_port_bindings(Container),
+    Ports = fetch_ports(Container),
     maps:fold(
       fun(Port, Published, Acc) ->
 	      service_port(Port, Published, State, Acc)

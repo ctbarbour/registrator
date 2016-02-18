@@ -56,5 +56,5 @@
   0},
  {<<"swim">>,
   {git,"https://github.com/barbct5/swim.git",
-       {ref,"5c0f4de93e59a108b0b38181eaacd138ae9b62ff"}},
+       {ref,"eedbf49d2332d5fe6f1b5db07819826ecfdc4edc"}},
   0}].

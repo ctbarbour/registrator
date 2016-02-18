@@ -104,19 +104,18 @@ handle_swim_event(user, {unregister, Actor, Id}, State) ->
     ok = error_logger:info_msg("Receive unregister event: ~p", [Id]),
     NewState = remove_node(Actor, Id, State),
     {noreply, NewState};
+handle_swim_event(user, M, State) ->
+    ok = error_logger:info_msg("Receieved unmatched user message: ~p", [M]),
+    {noreply, State};
 handle_swim_event(membership, {alive, Member, _Inc}, State) ->
     #state{gossip_groups=Groups, nodes=Nodes, actor=Actor} = State,
     ok = error_logger:info_msg("Member alive ~p", [Member]),
     lists:foreach(fun(Group) ->
-			  [ok = swim:publish(Group, {register, Actor, Service}) ||
-			      Service <- riak_dt_orswot:value(Nodes)]
+			  [swim:publish(Group, {register, Actor, Service}) || Service <- riak_dt_orswot:value(Nodes)]
 		  end, Groups),
     {noreply, State};
 handle_swim_event(membership, {faulty, Member, _Inc}, State) ->
     ok = error_logger:info_msg("Member faulty ~p", [Member]),
-    {noreply, State};
-handle_swim_event(membership, {suspect, Member, _Inc}, State) ->
-    ok = error_logger:info_msg("Member suspect ~p", [Member]),
     {noreply, State}.
 
 add_node(Actor, Node, State) ->

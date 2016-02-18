@@ -24,7 +24,7 @@ init([]) ->
 
 swim_opts() ->
     {ok, Actor} = application:get_env(registrator, actor),
-    [Actor, application:get_env(swim, groups, [])].
+    [Actor, application:get_env(registrator, groups, [])].
 
 registrator_docker_opts() ->
     get_opts([advertise, refresh_ttl]).

@@ -8,12 +8,9 @@ console:
   hostname: registrator
   domainname: docker.local
   ports:
-    - "5000:5000/udp"
-    - "5555:5555/udp"
+    - "5000/udp"
+    - "5555/udp"
   volumes:
-    - ./src:/usr/src/app/src
-    - ./config:/usr/src/app/config
-    - ./rebar.config:/usr/src/app/rebar.config
     - /var/run/docker.sock:/tmp/docker.sock
   volumes_from:
     - base
