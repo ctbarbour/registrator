@@ -2,6 +2,19 @@ base:
   command: /bin/true
   build: .
 
+registrator:
+  image: registrator_base
+  command: /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord-socat.conf
+  hostname: registrator
+  domainname: docker.local
+  volumes:
+    - /var/run/docker.sock:/tmp/docker.sock
+  volumes_from:
+    - base
+  ports:
+    - "5000:5000/udp"
+    - "53:5555/udp"
+
 console:
   image: registrator_base
   entrypoint: /bin/bash

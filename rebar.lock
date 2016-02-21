@@ -12,7 +12,7 @@
   2},
  {<<"dns">>,
   {git,"https://github.com/barbct5/dns_erlang.git",
-       {ref,"0fbbf6c8119aace4fa8cf41f76900d7af82f3d28"}},
+       {ref,"b2c694c7165d83553e8f71b44512a4b11852a746"}},
   0},
  {<<"goldrush">>,
   {git,"git://github.com/DeadZen/goldrush.git",
@@ -56,5 +56,5 @@
   0},
  {<<"swim">>,
   {git,"https://github.com/barbct5/swim.git",
-       {ref,"eedbf49d2332d5fe6f1b5db07819826ecfdc4edc"}},
+       {ref,"245996cb87844b4bc47bd15837ed8df7b2c0b704"}},
   0}].
