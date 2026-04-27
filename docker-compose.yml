@@ -1,29 +1,12 @@
-base:
-  command: /bin/true
-  build: .
-
-registrator:
-  image: registrator_base
-  command: /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord-socat.conf
-  hostname: registrator
-  domainname: docker.local
-  volumes:
-    - /var/run/docker.sock:/tmp/docker.sock
-  volumes_from:
-    - base
-  ports:
-    - "5000:5000/udp"
-    - "53:5555/udp"
-
-console:
-  image: registrator_base
-  entrypoint: /bin/bash
-  hostname: registrator
-  domainname: docker.local
-  ports:
-    - "5000/udp"
-    - "5555/udp"
-  volumes:
-    - /var/run/docker.sock:/tmp/docker.sock
-  volumes_from:
-    - base
+services:
+  registrator:
+    build: .
+    image: registrator:latest
+    hostname: registrator
+    environment:
+      REGISTRATOR_DOCKER_SOCKET: ${REGISTRATOR_DOCKER_SOCKET:-/var/run/docker.sock}
+    volumes:
+      - ${DOCKER_SOCKET:-/var/run/docker.sock}:${REGISTRATOR_DOCKER_SOCKET:-/var/run/docker.sock}:ro
+    ports:
+      - "5555:5555/udp"
+    restart: unless-stopped

@@ -2,13 +2,14 @@
 
 Service Registrator for Docker with DNS interface.
 
-[![Build Status](https://travis-ci.org/barbct5/registrator.svg)](https://travis-ci.org/barbct5/registrator)
-[![Docker Hub](https://img.shields.io/badge/docker-ready-blue.svg)](https://registry.hub.docker.com/u/barbct5/registrator/)
-
 Registrator automatically registers and deregisters services for any Docker
 container by inspecting containers as they come online. Registrator provides a
 DNS interface for external systems to query for the IP address and exposed port
 of a registered service.
+
+Multiple Registrator instances form a cluster: peers discover each other over
+SWIM and replicate the service registry as a CRDT (op-based ORSet) so any
+node can answer DNS lookups for any service in the cluster.
 
 ## Running Registrator
 
@@ -72,13 +73,50 @@ connect via the cli:
 
     $ redis-cli -h 192.168.99.100 -p 32770
 
+## Clustering
+
+Registrator nodes gossip membership via SWIM and replicate the service
+registry as a CRDT. Each node has three convergence paths:
+
+  - **Live op-gossip.** Each `register`/`unregister` is broadcast as a
+    SWIM user event tagged `(Actor, Seq)`; peers dedupe via a seen map.
+  - **Startup pull.** On boot, a node joins one of its configured swim
+    seeds and pulls the full ORSet from up to three seeds in parallel
+    over TCP, then merges. If no seed is reachable the join is retried
+    every 30s.
+  - **Periodic anti-entropy.** Every 5 minutes each node pulls a
+    random swim peer's full ORSet and merges, catching up any
+    envelopes lost from gossip.
+
+State-sync runs over TCP on `swim_port + 1000` (default `6000`).
+Configure seeds either in `config/sys.config`:
+
+    {groups, [
+      {lan, #{port    => 5000,
+              seeds   => [{"10.0.0.1", 5000}, {"10.0.0.2", 5000}],
+              key     => <<"...base64 AES-256...">>}}
+    ]}
+
+or via the `REGISTRATOR_SEEDS` env var (`host:port,host:port,...`),
+which appends to the config list. Hosts may be IP literals or DNS
+names. Leave seeds empty on the first cluster node.
+
+A two-node smoke cluster on podman:
+
+    $ just smoke-cluster
+
+spins up `reg1` (no seeds) and `reg2` (`REGISTRATOR_SEEDS=<reg1_ip>:5000`)
+on a shared podman network and prints verification commands.
+
 ## Building
 
-We use rebar3 as the standard build tool for Registrator. To compile and build
-a release:
+The toolchain is pinned via Nix flake. Enter the dev shell:
 
-    $ ./rebar3 release
+    $ nix develop          # or: direnv allow
 
-We can build a Docker image:
+Then use the `justfile`:
 
-    $ docker build --tag registrator:latest .
+    $ just compile         # rebar3 compile
+    $ just test            # rebar3 ct
+    $ just build           # podman image
+    $ just smoke-cluster   # two-node cluster on podman

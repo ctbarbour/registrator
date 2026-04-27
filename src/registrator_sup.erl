@@ -12,22 +12,44 @@ init([]) ->
 		 {registrator_dns_server, start_link, []},
 		 permanent, 5000, worker, [registrator_dns_server]},
     Nodes = {registrator_nodes,
-	     {registrator_nodes, start_link, swim_opts()},
+	     {registrator_nodes, start_link, [groups()]},
 	     permanent, 5000, worker, [registrator_nodes]},
-
+    StateSync = {registrator_state_sync_server,
+		 {registrator_state_sync_server, start_link,
+		  [{0,0,0,0}, state_sync_port()]},
+		 permanent, 5000, worker, [registrator_state_sync_server]},
     Opts = registrator_docker_opts(),
-    DockerOpts = application:get_all_env(nkdocker),
+    DockerOpts = docker_opts(),
     Docker = {registrator_docker,
 	      {registrator_docker, start_link, [Opts, DockerOpts]},
 	      permanent, 5000, worker, [registrator_docker]},
-    {ok, {{one_for_one, 5, 10}, [DNSServer, Nodes, Docker]}}.
+    {ok, {{one_for_one, 5, 10}, [DNSServer, Nodes, StateSync, Docker]}}.
 
-swim_opts() ->
-    {ok, Actor} = application:get_env(registrator, actor),
-    [Actor, application:get_env(registrator, groups, [])].
+groups() ->
+    application:get_env(registrator, groups, []).
+
+%% Single listener on a single port. Picks the first group's state_sync_port,
+%% or falls back to a default. Multi-group setups would need one listener per
+%% group; out of scope for now.
+state_sync_port() ->
+    case groups() of
+	[{_Name, #{state_sync_port := Port}} | _] -> Port;
+	_ -> 6000
+    end.
 
 registrator_docker_opts() ->
     get_opts([advertise, refresh_ttl]).
+
+docker_opts() ->
+    case os:getenv("REGISTRATOR_DOCKER_SOCKET") of
+	false ->
+	    case application:get_env(registrator, docker_socket) of
+		undefined  -> #{};
+		{ok, Path} -> #{socket => Path}
+	    end;
+	Path ->
+	    #{socket => Path}
+    end.
 
 get_opts(Keys) ->
     get_opts(Keys, []).
@@ -39,5 +61,5 @@ get_opts([Opt | Rest], Acc) ->
 	undefined ->
 	    get_opts(Rest, Acc);
 	{ok, Value} ->
-	    [{Opt, Value} | Acc]
+	    get_opts(Rest, [{Opt, Value} | Acc])
     end.

@@ -1,5 +1,4 @@
 .rebar3
-_*
 .eunit
 *.o
 *.beam
@@ -11,11 +10,11 @@ ebin
 log
 erl_crash.dump
 .rebar
-_rel
-_deps
-_plugins
-_tdeps
-logs
 _build
-.vagrant
-ttb_last_config
+_checkouts
+deps
+logs
+.direnv
+.envrc.local
+result
+result-*

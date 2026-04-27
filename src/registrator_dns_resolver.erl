@@ -8,7 +8,7 @@ nxdomain(Message) ->
     Message#dns_message{rc = ?DNS_RCODE_NXDOMAIN, aa = true}.
 
 resolve(Message) ->
-    resolve(Message, Message#dns_message.questions).
+    resolve(Message#dns_message{qr = true}, Message#dns_message.questions).
 
 resolve(Message, []) ->
     Message;
@@ -60,7 +60,8 @@ service_address_records(Message, QName, QType, Nodes) ->
 				{true, Answer}
 			end
 		end, Nodes),
-    Message#dns_message{answers = Answers ++ Records}.
+    NewAnswers = Answers ++ Records,
+    Message#dns_message{answers = NewAnswers, anc = length(NewAnswers)}.
 
 format_address_record({_, _, _, _} = Ip, QName, QType)
   when QType =:= ?DNS_TYPE_ANY; QType =:= ?DNS_TYPE_A ->
@@ -85,7 +86,8 @@ format_srv_records(Message, QName, _QType, Nodes) ->
 						  target = format_ip(Target)},
 			   #dns_rr{name = QName, type = ?DNS_TYPE_SRV, ttl = 0, data = Data}
 		   end, Nodes),
-    Message#dns_message{answers = Answers ++ SrvRecords}.
+    NewAnswers = Answers ++ SrvRecords,
+    Message#dns_message{answers = NewAnswers, anc = length(NewAnswers)}.
 
 format_ip(Ip) when is_list(Ip) ->
     list_to_binary(Ip);

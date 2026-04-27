@@ -47,13 +47,13 @@ handle_udp_dns_query(Socket, Host, Port, Packet) ->
 
 handle_decoded_message(DecodedMessage, Socket, Host, Port) ->
     Response = registrator_dns_resolver:resolve(DecodedMessage),
-    case dns:encode_message(Response, [{max_size, 512}]) of
-	{false, EncodedMessage} ->
-	    gen_udp:send(Socket, Host, Port, EncodedMessage);
-	{true, EncodedMessage, Message} when is_record(Message, dns_message) ->
-	    gen_udp:send(Socket, Host, Port, EncodedMessage);
-	{false, EncodedMessage, _TsigMac} ->
-	    gen_udp:send(Socket, Host, Port, EncodedMessage);
-	{true, EncodedMessage, _TsigMac, _Message} ->
-	    gen_udp:send(Socket, Host, Port, EncodedMessage)
+    EncodedMessage = encode_response(Response),
+    gen_udp:send(Socket, Host, Port, EncodedMessage).
+
+encode_response(Response) ->
+    case dns:encode_message(Response, #{max_size => 512}) of
+	Bin when is_binary(Bin) -> Bin;
+	{Bin, _TsigMac} when is_binary(Bin) -> Bin;
+	{truncated, Bin, _Msg} -> Bin;
+	{truncated, Bin, _TsigMac, _Msg} -> Bin
     end.
