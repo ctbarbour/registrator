@@ -2,7 +2,7 @@
 
 -behavior(application).
 
--export([start/2, stop/1]).
+-export([start/2, stop/1, validate_authoritative_zone/0]).
 
 start(_StartType, _StartArgs) ->
     case validate_authoritative_zone() of
@@ -25,7 +25,6 @@ validate_authoritative_zone() ->
                 <<>> ->
                     {error, empty};
                 _ ->
-                    %% Strip trailing dot before ASCII check
                     Stripped = case binary:last(Raw) of
                         $. -> binary:part(Raw, 0, byte_size(Raw) - 1);
                         _  -> Raw
@@ -34,7 +33,14 @@ validate_authoritative_zone() ->
                         <<>> ->
                             {error, empty};
                         _ ->
-                            check_ascii(Stripped)
+                            Canonical = dns_domain:to_lower(Stripped),
+                            case check_ascii(Canonical) of
+                                ok ->
+                                    application:set_env(registrator, authoritative_zone, Canonical),
+                                    ok;
+                                Error ->
+                                    Error
+                            end
                     end
             end;
         {ok, _} ->

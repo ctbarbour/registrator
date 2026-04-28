@@ -7,11 +7,7 @@
 -spec auth_zone() -> binary().
 auth_zone() ->
     {ok, Zone} = application:get_env(registrator, authoritative_zone),
-    Normalized = dns_domain:to_lower(iolist_to_binary(Zone)),
-    case binary:last(Normalized) of
-        $. -> binary:part(Normalized, 0, byte_size(Normalized) - 1);
-        _  -> Normalized
-    end.
+    Zone.
 
 -spec in_zone(binary(), binary()) -> boolean().
 in_zone(QName, Zone) ->
