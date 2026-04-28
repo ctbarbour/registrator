@@ -76,7 +76,7 @@ run tag="latest":
 
 # Boot two registrators on a shared podman network so we can verify SWIM
 # replication. After this returns, attach to either node's remote_console
-# and call swim:join(lan, {Peer_Ip_Tuple, 5000}) to bootstrap, then register
+# and call swim:join(lan, {Peer_Ip_Tuple, 7946}) to bootstrap, then register
 # a service on one and verify it appears via lookup on the other.
 smoke-cluster tag="latest": (build tag)
     #!/usr/bin/env bash
@@ -95,13 +95,13 @@ smoke-cluster tag="latest": (build tag)
     REG1_IP=$(podman inspect reg1 | jq -r '.[0].NetworkSettings.Networks["swim-cluster"].IPAddress')
     podman run -d --name reg2 --network swim-cluster \
         -e REGISTRATOR_DOCKER_SOCKET="$SOCKET" \
-        -e REGISTRATOR_SEEDS="${REG1_IP}:5000" \
+        -e REGISTRATOR_SEEDS="${REG1_IP}:7946" \
         -v "$SOCKET:$SOCKET" \
         {{ image }}:{{ tag }} > /dev/null
     REG2_IP=$(podman inspect reg2 | jq -r '.[0].NetworkSettings.Networks["swim-cluster"].IPAddress')
     echo
     echo "==> reg1 ip: $REG1_IP   (bootstrap, no seeds)"
-    echo "==> reg2 ip: $REG2_IP   (REGISTRATOR_SEEDS=${REG1_IP}:5000)"
+    echo "==> reg2 ip: $REG2_IP   (REGISTRATOR_SEEDS=${REG1_IP}:7946)"
     echo
     echo "Next steps:"
     echo "  Terminal A: podman exec -it reg1 /opt/registrator/bin/registrator remote_console"

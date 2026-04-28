@@ -66,7 +66,7 @@ init([Groups]) ->
 
 start_group({Name, Config0}) when is_atom(Name), is_map(Config0) ->
     Config = resolve_swim_config(Config0),
-    SwimPort = maps:get(port, Config, 5000),
+    SwimPort = maps:get(port, Config, 7946),
     SyncPort = maps:get(state_sync_port, Config0,
 			SwimPort + ?DEFAULT_STATE_SYNC_PORT_OFFSET),
     ConfigSeeds = normalize_seeds(maps:get(seeds, Config0, [])),
