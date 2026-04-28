@@ -22,7 +22,7 @@ make_upstream_query(Message) ->
         [] -> {[], 0};
         [Q | _] -> {[Q], 1}
     end,
-    UpstreamMsg = Message#dns_message{id = UpstreamId, questions = FirstQuestion, qc = QC},
+    UpstreamMsg = Message#dns_message{id = UpstreamId, qr = false, questions = FirstQuestion, qc = QC},
     Wire = dns:encode_message(UpstreamMsg),
     {UpstreamId, Wire}.
 
