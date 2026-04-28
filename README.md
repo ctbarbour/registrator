@@ -21,7 +21,10 @@ Registrator looks like this:
       	     --name=registrator \
 	     --volume=/var/run/docker.sock:/tmp/docker.sock \
 	     -p 5555:5555/udp \
-	     barbct5/registrator:latest
+	     ghcr.io/ctbarbour/registrator:latest
+
+Images are published from `main` to GitHub Container Registry, tagged
+`latest` and the long commit SHA.
 
 First we run the container detached and name it `registrator`. We also mount
 the Docker socket inside in the container so the Registrator service can listen
@@ -117,6 +120,20 @@ The toolchain is pinned via Nix flake. Enter the dev shell:
 Then use the `justfile`:
 
     $ just compile         # rebar3 compile
-    $ just test            # rebar3 ct
+    $ just test            # rebar3 ct (incl. PropEr properties)
+    $ just check           # rebar3 do xref, dialyzer
     $ just build           # podman image
     $ just smoke-cluster   # two-node cluster on podman
+
+## CI
+
+GitHub Actions runs two workflows:
+
+  - **PR checks** (`.github/workflows/pr.yml`) — on every pull request
+    to `main`: `rebar3 compile`, `rebar3 do xref, dialyzer`, and
+    `rebar3 ct` (which exercises the PropEr properties via
+    `ct_property_test`).
+  - **Build and publish** (`.github/workflows/main.yml`) — on push to
+    `main`: same build/test job, then builds the Dockerfile and pushes
+    `ghcr.io/ctbarbour/registrator` tagged with the long commit SHA
+    and `latest`.
