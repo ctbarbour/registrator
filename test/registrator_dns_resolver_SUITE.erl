@@ -252,77 +252,6 @@ non_ascii_config_app_start_fails(_Config) ->
     Result = registrator_app:start(normal, []),
     {error, {invalid_config, authoritative_zone, non_ascii}} = Result.
 
-%%--------------------------------------------------------------------
-%% Stub UDP responder helpers (for forwarding tests)
-%%--------------------------------------------------------------------
-
-%% Modes: {respond_with, Msg}, {respond_with_bytes, Bin}, respond_with_id_mismatch,
-%%        {respond_counted, Msg, CounterPid}, drop
-start_udp_stub(Mode) ->
-    Self = self(),
-    spawn(fun() -> udp_stub_init(Self, Mode) end).
-
-wait_for_udp_stub_port() ->
-    receive
-        {stub_ready, Port} -> {ok, Port}
-    after 5000 ->
-        {error, stub_timeout}
-    end.
-
-stop_udp_stub(Pid) when is_pid(Pid) ->
-    Pid ! stop;
-stop_udp_stub(_) ->
-    ok.
-
-udp_stub_init(Parent, Mode) ->
-    {ok, Sock} = gen_udp:open(0, [binary, {active, false}]),
-    {ok, Port} = inet:port(Sock),
-    Parent ! {stub_ready, Port},
-    udp_stub_loop(Sock, Mode).
-
-udp_stub_loop(Sock, drop) ->
-    case gen_udp:recv(Sock, 0, infinity) of
-        {ok, _} ->
-            receive stop -> gen_udp:close(Sock) end;
-        _ ->
-            gen_udp:close(Sock)
-    end;
-udp_stub_loop(Sock, Mode) ->
-    receive
-        stop ->
-            gen_udp:close(Sock)
-    after 0 ->
-        case gen_udp:recv(Sock, 0, 100) of
-            {ok, {Ip, Port, Bin}} ->
-                handle_udp_stub_recv(Sock, Ip, Port, Bin, Mode),
-                udp_stub_loop(Sock, Mode);
-            {error, timeout} ->
-                udp_stub_loop(Sock, Mode);
-            _ ->
-                gen_udp:close(Sock)
-        end
-    end.
-
-handle_udp_stub_recv(Sock, Ip, Port, Bin, {respond_with, RespMsg}) ->
-    InId = decode_query_id(Bin),
-    Reply = RespMsg#dns_message{id = InId},
-    gen_udp:send(Sock, Ip, Port, dns:encode_message(Reply));
-handle_udp_stub_recv(Sock, Ip, Port, Bin, {respond_counted, RespMsg, CounterPid}) ->
-    CounterPid ! increment,
-    InId = decode_query_id(Bin),
-    Reply = RespMsg#dns_message{id = InId},
-    gen_udp:send(Sock, Ip, Port, dns:encode_message(Reply));
-handle_udp_stub_recv(Sock, Ip, Port, _Bin, {respond_with_bytes, Bytes}) ->
-    gen_udp:send(Sock, Ip, Port, Bytes);
-handle_udp_stub_recv(_Sock, _Ip, _Port, _Bin, drop) ->
-    ok.
-
-decode_query_id(Bin) ->
-    case dns:decode_message(Bin) of
-        M when is_record(M, dns_message) -> M#dns_message.id;
-        {trailing_garbage, M, _} -> M#dns_message.id
-    end.
-
 make_noerror_resp_with_answer() ->
     Answers = [#dns_rr{
         name = <<"_redis._tcp.upstream.example.">>,
@@ -351,13 +280,13 @@ out_of_zone_with_empty_recursors_still_refused(_Config) ->
     false = Resp#dns_message.aa.
 
 out_of_zone_with_recursors_success(_Config) ->
-    Stub = start_udp_stub({respond_with, make_noerror_resp_with_answer()}),
-    {ok, Port} = wait_for_udp_stub_port(),
+    Stub = registrator_dns_test_stub:start({respond_with, make_noerror_resp_with_answer()}),
+    {ok, Port} = registrator_dns_test_stub:wait_for_port(),
     application:set_env(registrator, recursors, [{"127.0.0.1", Port}]),
     Msg = make_query(<<"_redis._tcp.upstream.example.">>, ?DNS_TYPE_A),
     ClientId = Msg#dns_message.id,
     Resp = registrator_dns_resolver:resolve(Msg),
-    stop_udp_stub(Stub),
+    registrator_dns_test_stub:stop(Stub),
     ?DNS_RCODE_NOERROR = Resp#dns_message.rc,
     true = Resp#dns_message.ra,
     false = Resp#dns_message.aa,
@@ -371,19 +300,19 @@ out_of_zone_with_recursors_servfail_passthrough(_Config) ->
     %% Stub returns SERVFAIL; it should be passed through verbatim (no retry to second recursor)
     CounterPid = spawn(fun() -> counter_loop(0) end),
     ServfailResp = #dns_message{qr = true, rc = ?DNS_RCODE_SERVFAIL, ra = false, aa = false},
-    Stub1 = start_udp_stub({respond_counted, ServfailResp, CounterPid}),
-    {ok, Port1} = wait_for_udp_stub_port(),
+    Stub1 = registrator_dns_test_stub:start({respond_counted, ServfailResp, CounterPid}),
+    {ok, Port1} = registrator_dns_test_stub:wait_for_port(),
     %% A second stub (decode-error) that should NOT be contacted
-    Stub2 = start_udp_stub({respond_with_bytes, <<0>>}),
-    {ok, Port2} = wait_for_udp_stub_port(),
+    Stub2 = registrator_dns_test_stub:start({respond_with_bytes, <<0>>}),
+    {ok, Port2} = registrator_dns_test_stub:wait_for_port(),
     application:set_env(registrator, recursors, [{"127.0.0.1", Port1}, {"127.0.0.1", Port2}]),
     Msg = make_query(<<"_redis._tcp.upstream.example.">>, ?DNS_TYPE_A),
     ClientId = Msg#dns_message.id,
     Resp = registrator_dns_resolver:resolve(Msg),
     CounterPid ! {get, self()},
     Count = receive {count, N} -> N end,
-    stop_udp_stub(Stub1),
-    stop_udp_stub(Stub2),
+    registrator_dns_test_stub:stop(Stub1),
+    registrator_dns_test_stub:stop(Stub2),
     ?DNS_RCODE_SERVFAIL = Resp#dns_message.rc,
     true = Resp#dns_message.ra,
     false = Resp#dns_message.aa,
@@ -398,16 +327,16 @@ counter_loop(N) ->
     end.
 
 out_of_zone_with_all_recursors_failing_servfail(_Config) ->
-    Stub1 = start_udp_stub({respond_with_bytes, <<0>>}),
-    {ok, Port1} = wait_for_udp_stub_port(),
-    Stub2 = start_udp_stub({respond_with_bytes, <<0>>}),
-    {ok, Port2} = wait_for_udp_stub_port(),
+    Stub1 = registrator_dns_test_stub:start({respond_with_bytes, <<0>>}),
+    {ok, Port1} = registrator_dns_test_stub:wait_for_port(),
+    Stub2 = registrator_dns_test_stub:start({respond_with_bytes, <<0>>}),
+    {ok, Port2} = registrator_dns_test_stub:wait_for_port(),
     application:set_env(registrator, recursors, [{"127.0.0.1", Port1}, {"127.0.0.1", Port2}]),
     Msg = make_query(<<"_redis._tcp.upstream.example.">>, ?DNS_TYPE_A),
     ClientId = Msg#dns_message.id,
     Resp = registrator_dns_resolver:resolve(Msg),
-    stop_udp_stub(Stub1),
-    stop_udp_stub(Stub2),
+    registrator_dns_test_stub:stop(Stub1),
+    registrator_dns_test_stub:stop(Stub2),
     ?DNS_RCODE_SERVFAIL = Resp#dns_message.rc,
     true = Resp#dns_message.ra,
     false = Resp#dns_message.aa,
@@ -415,16 +344,16 @@ out_of_zone_with_all_recursors_failing_servfail(_Config) ->
 
 env_var_appends_to_sys_config_recursors(_Config) ->
     %% PortA = decode-error stub (sys.config entry), PortB = success stub (env-var entry)
-    StubA = start_udp_stub({respond_with_bytes, <<0>>}),
-    {ok, PortA} = wait_for_udp_stub_port(),
-    StubB = start_udp_stub({respond_with, make_noerror_resp_with_answer()}),
-    {ok, PortB} = wait_for_udp_stub_port(),
+    StubA = registrator_dns_test_stub:start({respond_with_bytes, <<0>>}),
+    {ok, PortA} = registrator_dns_test_stub:wait_for_port(),
+    StubB = registrator_dns_test_stub:start({respond_with, make_noerror_resp_with_answer()}),
+    {ok, PortB} = registrator_dns_test_stub:wait_for_port(),
     application:set_env(registrator, recursors, [{"127.0.0.1", PortA}]),
     os:putenv("REGISTRATOR_RECURSORS", "127.0.0.1:" ++ integer_to_list(PortB)),
     Msg = make_query(<<"_redis._tcp.upstream.example.">>, ?DNS_TYPE_A),
     Resp = registrator_dns_resolver:resolve(Msg),
-    stop_udp_stub(StubA),
-    stop_udp_stub(StubB),
+    registrator_dns_test_stub:stop(StubA),
+    registrator_dns_test_stub:stop(StubB),
     os:unsetenv("REGISTRATOR_RECURSORS"),
     %% Should succeed via PortB (env-var recursor)
     ?DNS_RCODE_NOERROR = Resp#dns_message.rc,
@@ -432,10 +361,10 @@ env_var_appends_to_sys_config_recursors(_Config) ->
 
 parse_env_recursor_drops_bad_entries(_Config) ->
     %% Set up two "good" stubs and make bad entries in the env var
-    GoodStub1 = start_udp_stub({respond_with_bytes, <<0>>}),
-    {ok, GoodPort1} = wait_for_udp_stub_port(),
-    GoodStub2 = start_udp_stub({respond_with_bytes, <<0>>}),
-    {ok, GoodPort2} = wait_for_udp_stub_port(),
+    GoodStub1 = registrator_dns_test_stub:start({respond_with_bytes, <<0>>}),
+    {ok, GoodPort1} = registrator_dns_test_stub:wait_for_port(),
+    GoodStub2 = registrator_dns_test_stub:start({respond_with_bytes, <<0>>}),
+    {ok, GoodPort2} = registrator_dns_test_stub:wait_for_port(),
     application:set_env(registrator, recursors, []),
     EnvVal = "127.0.0.1:" ++ integer_to_list(GoodPort1) ++
              ",bad:notaport" ++
@@ -446,8 +375,8 @@ parse_env_recursor_drops_bad_entries(_Config) ->
     %% Call resolve with out-of-zone query; both good stubs return decode error -> SERVFAIL
     Msg = make_query(<<"_redis._tcp.upstream.example.">>, ?DNS_TYPE_A),
     Resp = registrator_dns_resolver:resolve(Msg),
-    stop_udp_stub(GoodStub1),
-    stop_udp_stub(GoodStub2),
+    registrator_dns_test_stub:stop(GoodStub1),
+    registrator_dns_test_stub:stop(GoodStub2),
     os:unsetenv("REGISTRATOR_RECURSORS"),
     %% Both good stubs received a request (proving only 2 entries survived parse)
     %% and the result is SERVFAIL (both return decode error)
