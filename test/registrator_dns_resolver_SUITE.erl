@@ -19,7 +19,13 @@
     case_insensitive_zone/1,
     trailing_dot_zone/1,
     missing_config_app_start_fails/1,
-    non_ascii_config_app_start_fails/1
+    non_ascii_config_app_start_fails/1,
+    out_of_zone_with_empty_recursors_still_refused/1,
+    out_of_zone_with_recursors_success/1,
+    out_of_zone_with_recursors_servfail_passthrough/1,
+    out_of_zone_with_all_recursors_failing_servfail/1,
+    env_var_appends_to_sys_config_recursors/1,
+    parse_env_recursor_drops_bad_entries/1
 ]).
 
 %%--------------------------------------------------------------------
@@ -72,7 +78,13 @@ all() ->
         case_insensitive_zone,
         trailing_dot_zone,
         missing_config_app_start_fails,
-        non_ascii_config_app_start_fails
+        non_ascii_config_app_start_fails,
+        out_of_zone_with_empty_recursors_still_refused,
+        out_of_zone_with_recursors_success,
+        out_of_zone_with_recursors_servfail_passthrough,
+        out_of_zone_with_all_recursors_failing_servfail,
+        env_var_appends_to_sys_config_recursors,
+        parse_env_recursor_drops_bad_entries
     ].
 
 init_per_suite(Config) ->
@@ -98,16 +110,21 @@ init_per_testcase(trailing_dot_zone, Config) ->
     Config;
 init_per_testcase(_TestCase, Config) ->
     application:set_env(registrator, authoritative_zone, <<"service.local">>),
+    application:set_env(registrator, recursors, []),
     Config.
 
 end_per_testcase(missing_config_app_start_fails, Config) ->
     restore_zone(Config),
+    application:unset_env(registrator, recursors),
     Config;
 end_per_testcase(non_ascii_config_app_start_fails, Config) ->
     restore_zone(Config),
+    application:unset_env(registrator, recursors),
     Config;
 end_per_testcase(_TestCase, Config) ->
     application:set_env(registrator, authoritative_zone, <<"service.local">>),
+    application:unset_env(registrator, recursors),
+    os:unsetenv("REGISTRATOR_RECURSORS"),
     Config.
 
 restore_zone(Config) ->
@@ -234,3 +251,204 @@ non_ascii_config_app_start_fails(_Config) ->
     application:set_env(registrator, authoritative_zone, <<240, 159, 152, 128, $., $l, $o, $c, $a, $l>>),
     Result = registrator_app:start(normal, []),
     {error, {invalid_config, authoritative_zone, non_ascii}} = Result.
+
+%%--------------------------------------------------------------------
+%% Stub UDP responder helpers (for forwarding tests)
+%%--------------------------------------------------------------------
+
+%% Modes: {respond_with, Msg}, {respond_with_bytes, Bin}, respond_with_id_mismatch,
+%%        {respond_counted, Msg, CounterPid}, drop
+start_udp_stub(Mode) ->
+    Self = self(),
+    spawn(fun() -> udp_stub_init(Self, Mode) end).
+
+wait_for_udp_stub_port() ->
+    receive
+        {stub_ready, Port} -> {ok, Port}
+    after 5000 ->
+        {error, stub_timeout}
+    end.
+
+stop_udp_stub(Pid) when is_pid(Pid) ->
+    Pid ! stop;
+stop_udp_stub(_) ->
+    ok.
+
+udp_stub_init(Parent, Mode) ->
+    {ok, Sock} = gen_udp:open(0, [binary, {active, false}]),
+    {ok, Port} = inet:port(Sock),
+    Parent ! {stub_ready, Port},
+    udp_stub_loop(Sock, Mode).
+
+udp_stub_loop(Sock, drop) ->
+    case gen_udp:recv(Sock, 0, infinity) of
+        {ok, _} ->
+            receive stop -> gen_udp:close(Sock) end;
+        _ ->
+            gen_udp:close(Sock)
+    end;
+udp_stub_loop(Sock, Mode) ->
+    receive
+        stop ->
+            gen_udp:close(Sock)
+    after 0 ->
+        case gen_udp:recv(Sock, 0, 100) of
+            {ok, {Ip, Port, Bin}} ->
+                handle_udp_stub_recv(Sock, Ip, Port, Bin, Mode),
+                udp_stub_loop(Sock, Mode);
+            {error, timeout} ->
+                udp_stub_loop(Sock, Mode);
+            _ ->
+                gen_udp:close(Sock)
+        end
+    end.
+
+handle_udp_stub_recv(Sock, Ip, Port, Bin, {respond_with, RespMsg}) ->
+    InId = decode_query_id(Bin),
+    Reply = RespMsg#dns_message{id = InId},
+    gen_udp:send(Sock, Ip, Port, dns:encode_message(Reply));
+handle_udp_stub_recv(Sock, Ip, Port, Bin, {respond_counted, RespMsg, CounterPid}) ->
+    CounterPid ! increment,
+    InId = decode_query_id(Bin),
+    Reply = RespMsg#dns_message{id = InId},
+    gen_udp:send(Sock, Ip, Port, dns:encode_message(Reply));
+handle_udp_stub_recv(Sock, Ip, Port, _Bin, {respond_with_bytes, Bytes}) ->
+    gen_udp:send(Sock, Ip, Port, Bytes);
+handle_udp_stub_recv(_Sock, _Ip, _Port, _Bin, drop) ->
+    ok.
+
+decode_query_id(Bin) ->
+    case dns:decode_message(Bin) of
+        M when is_record(M, dns_message) -> M#dns_message.id;
+        {trailing_garbage, M, _} -> M#dns_message.id
+    end.
+
+make_noerror_resp_with_answer() ->
+    Answers = [#dns_rr{
+        name = <<"_redis._tcp.upstream.example.">>,
+        type = ?DNS_TYPE_A,
+        ttl = 300,
+        data = #dns_rrdata_a{ip = {10, 0, 0, 1}}
+    }],
+    #dns_message{
+        qr = true,
+        rc = ?DNS_RCODE_NOERROR,
+        ra = false,
+        aa = false,
+        anc = length(Answers),
+        answers = Answers
+    }.
+
+%%--------------------------------------------------------------------
+%% New forwarding-path test cases
+%%--------------------------------------------------------------------
+
+out_of_zone_with_empty_recursors_still_refused(_Config) ->
+    application:set_env(registrator, recursors, []),
+    Msg = make_query(<<"_redis._tcp.upstream.example.">>, ?DNS_TYPE_A),
+    Resp = registrator_dns_resolver:resolve(Msg),
+    ?DNS_RCODE_REFUSED = Resp#dns_message.rc,
+    false = Resp#dns_message.aa.
+
+out_of_zone_with_recursors_success(_Config) ->
+    Stub = start_udp_stub({respond_with, make_noerror_resp_with_answer()}),
+    {ok, Port} = wait_for_udp_stub_port(),
+    application:set_env(registrator, recursors, [{"127.0.0.1", Port}]),
+    Msg = make_query(<<"_redis._tcp.upstream.example.">>, ?DNS_TYPE_A),
+    ClientId = Msg#dns_message.id,
+    Resp = registrator_dns_resolver:resolve(Msg),
+    stop_udp_stub(Stub),
+    ?DNS_RCODE_NOERROR = Resp#dns_message.rc,
+    true = Resp#dns_message.ra,
+    false = Resp#dns_message.aa,
+    ClientId = Resp#dns_message.id,
+    true = length(Resp#dns_message.answers) > 0,
+    %% TTL preserved
+    [Ans | _] = Resp#dns_message.answers,
+    300 = Ans#dns_rr.ttl.
+
+out_of_zone_with_recursors_servfail_passthrough(_Config) ->
+    %% Stub returns SERVFAIL; it should be passed through verbatim (no retry to second recursor)
+    CounterPid = spawn(fun() -> counter_loop(0) end),
+    ServfailResp = #dns_message{qr = true, rc = ?DNS_RCODE_SERVFAIL, ra = false, aa = false},
+    Stub1 = start_udp_stub({respond_counted, ServfailResp, CounterPid}),
+    {ok, Port1} = wait_for_udp_stub_port(),
+    %% A second stub (decode-error) that should NOT be contacted
+    Stub2 = start_udp_stub({respond_with_bytes, <<0>>}),
+    {ok, Port2} = wait_for_udp_stub_port(),
+    application:set_env(registrator, recursors, [{"127.0.0.1", Port1}, {"127.0.0.1", Port2}]),
+    Msg = make_query(<<"_redis._tcp.upstream.example.">>, ?DNS_TYPE_A),
+    ClientId = Msg#dns_message.id,
+    Resp = registrator_dns_resolver:resolve(Msg),
+    CounterPid ! {get, self()},
+    Count = receive {count, N} -> N end,
+    stop_udp_stub(Stub1),
+    stop_udp_stub(Stub2),
+    ?DNS_RCODE_SERVFAIL = Resp#dns_message.rc,
+    true = Resp#dns_message.ra,
+    false = Resp#dns_message.aa,
+    ClientId = Resp#dns_message.id,
+    %% Exactly one request: SERVFAIL is passthrough, no retry
+    1 = Count.
+
+counter_loop(N) ->
+    receive
+        increment -> counter_loop(N + 1);
+        {get, From} -> From ! {count, N}
+    end.
+
+out_of_zone_with_all_recursors_failing_servfail(_Config) ->
+    Stub1 = start_udp_stub({respond_with_bytes, <<0>>}),
+    {ok, Port1} = wait_for_udp_stub_port(),
+    Stub2 = start_udp_stub({respond_with_bytes, <<0>>}),
+    {ok, Port2} = wait_for_udp_stub_port(),
+    application:set_env(registrator, recursors, [{"127.0.0.1", Port1}, {"127.0.0.1", Port2}]),
+    Msg = make_query(<<"_redis._tcp.upstream.example.">>, ?DNS_TYPE_A),
+    ClientId = Msg#dns_message.id,
+    Resp = registrator_dns_resolver:resolve(Msg),
+    stop_udp_stub(Stub1),
+    stop_udp_stub(Stub2),
+    ?DNS_RCODE_SERVFAIL = Resp#dns_message.rc,
+    true = Resp#dns_message.ra,
+    false = Resp#dns_message.aa,
+    ClientId = Resp#dns_message.id.
+
+env_var_appends_to_sys_config_recursors(_Config) ->
+    %% PortA = decode-error stub (sys.config entry), PortB = success stub (env-var entry)
+    StubA = start_udp_stub({respond_with_bytes, <<0>>}),
+    {ok, PortA} = wait_for_udp_stub_port(),
+    StubB = start_udp_stub({respond_with, make_noerror_resp_with_answer()}),
+    {ok, PortB} = wait_for_udp_stub_port(),
+    application:set_env(registrator, recursors, [{"127.0.0.1", PortA}]),
+    os:putenv("REGISTRATOR_RECURSORS", "127.0.0.1:" ++ integer_to_list(PortB)),
+    Msg = make_query(<<"_redis._tcp.upstream.example.">>, ?DNS_TYPE_A),
+    Resp = registrator_dns_resolver:resolve(Msg),
+    stop_udp_stub(StubA),
+    stop_udp_stub(StubB),
+    os:unsetenv("REGISTRATOR_RECURSORS"),
+    %% Should succeed via PortB (env-var recursor)
+    ?DNS_RCODE_NOERROR = Resp#dns_message.rc,
+    true = Resp#dns_message.ra.
+
+parse_env_recursor_drops_bad_entries(_Config) ->
+    %% Set up two "good" stubs and make bad entries in the env var
+    GoodStub1 = start_udp_stub({respond_with_bytes, <<0>>}),
+    {ok, GoodPort1} = wait_for_udp_stub_port(),
+    GoodStub2 = start_udp_stub({respond_with_bytes, <<0>>}),
+    {ok, GoodPort2} = wait_for_udp_stub_port(),
+    application:set_env(registrator, recursors, []),
+    EnvVal = "127.0.0.1:" ++ integer_to_list(GoodPort1) ++
+             ",bad:notaport" ++
+             ",1.2.3.4:99999" ++
+             ",no_colon" ++
+             ",127.0.0.1:" ++ integer_to_list(GoodPort2),
+    os:putenv("REGISTRATOR_RECURSORS", EnvVal),
+    %% Call resolve with out-of-zone query; both good stubs return decode error -> SERVFAIL
+    Msg = make_query(<<"_redis._tcp.upstream.example.">>, ?DNS_TYPE_A),
+    Resp = registrator_dns_resolver:resolve(Msg),
+    stop_udp_stub(GoodStub1),
+    stop_udp_stub(GoodStub2),
+    os:unsetenv("REGISTRATOR_RECURSORS"),
+    %% Both good stubs received a request (proving only 2 entries survived parse)
+    %% and the result is SERVFAIL (both return decode error)
+    ?DNS_RCODE_SERVFAIL = Resp#dns_message.rc.
