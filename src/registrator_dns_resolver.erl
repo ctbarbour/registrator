@@ -22,6 +22,10 @@ in_zone(QName, Zone) ->
 refused(Message) ->
     Message#dns_message{rc = ?DNS_RCODE_REFUSED}.
 
+-spec servfail(#dns_message{}) -> #dns_message{}.
+servfail(Message) ->
+    Message#dns_message{rc = ?DNS_RCODE_SERVFAIL, aa = false, ra = true}.
+
 nxdomain(Message) ->
     Message#dns_message{rc = ?DNS_RCODE_NXDOMAIN, aa = true}.
 
@@ -42,7 +46,20 @@ resolve(Message, QName, QType) ->
     Zone = auth_zone(),
     case in_zone(QName, Zone) of
 	false ->
-	    refused(Message);
+	    Recursors = recursors(),
+	    case Recursors of
+		[] ->
+		    refused(Message);
+		_ ->
+		    case registrator_dns_recursor:forward(Message, Recursors) of
+			{ok, UpstreamMsg} ->
+			    UpstreamMsg;
+			{error, all_failed} ->
+			    servfail(Message);
+			{error, no_recursors} ->
+			    refused(Message)
+		    end
+	    end;
 	true ->
 	    Regexp = <<"^_(?<SERVICE>[a-zA-Z]+)\._(?<PROTOCOL>[a-zA-Z]+).(?<DOMAIN>.*)">>,
 	    case re:run(QName, Regexp, [global, {capture, all, binary}]) of
@@ -119,3 +136,39 @@ format_ip(Ip) when is_binary(Ip) ->
     Ip;
 format_ip(Ip) when is_tuple(Ip) ->
     format_ip(inet_parse:ntoa(Ip)).
+
+-spec recursors() -> [{string(), 1..65535}].
+recursors() ->
+    Config = application:get_env(registrator, recursors, []),
+    Config ++ env_recursors().
+
+env_recursors() ->
+    case os:getenv("REGISTRATOR_RECURSORS") of
+	false -> [];
+	""    -> [];
+	Str   -> parse_env_recursor_list(Str)
+    end.
+
+parse_env_recursor_list(Str) ->
+    Tokens = [T || T <- string:tokens(Str, ", "), T =/= ""],
+    lists:foldr(fun parse_env_recursor/2, [], Tokens).
+
+parse_env_recursor(Tok, Acc) ->
+    case string:tokens(Tok, ":") of
+	[Host, PortStr] ->
+	    try
+		Port = list_to_integer(PortStr),
+		if Port < 1 orelse Port > 65535 ->
+			error_logger:warning_msg("ignoring REGISTRATOR_RECURSORS entry ~p: port out of range", [Tok]),
+			Acc;
+		   true ->
+			[{Host, Port} | Acc]
+		end
+	    catch error:badarg ->
+		    error_logger:warning_msg("ignoring REGISTRATOR_RECURSORS entry ~p: bad port", [Tok]),
+		    Acc
+	    end;
+	_ ->
+	    error_logger:warning_msg("ignoring REGISTRATOR_RECURSORS entry ~p: expected host:port", [Tok]),
+	    Acc
+    end.
