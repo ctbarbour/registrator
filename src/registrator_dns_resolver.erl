@@ -4,6 +4,28 @@
 
 -export([resolve/1]).
 
+-spec auth_zone() -> binary().
+auth_zone() ->
+    {ok, Zone} = application:get_env(registrator, authoritative_zone),
+    Normalized = dns_domain:to_lower(iolist_to_binary(Zone)),
+    case binary:last(Normalized) of
+        $. -> binary:part(Normalized, 0, byte_size(Normalized) - 1);
+        _  -> Normalized
+    end.
+
+-spec in_zone(binary(), binary()) -> boolean().
+in_zone(QName, Zone) ->
+    LQName = dns_domain:to_lower(QName),
+    LZone  = dns_domain:to_lower(Zone),
+    DotZone = <<$., LZone/binary>>,
+    LQName =:= LZone orelse
+    (byte_size(LQName) > byte_size(LZone) andalso
+     binary:part(LQName, byte_size(LQName) - byte_size(DotZone), byte_size(DotZone)) =:= DotZone).
+
+-spec refused(#dns_message{}) -> #dns_message{}.
+refused(Message) ->
+    Message#dns_message{rc = ?DNS_RCODE_REFUSED}.
+
 nxdomain(Message) ->
     Message#dns_message{rc = ?DNS_RCODE_NXDOMAIN, aa = true}.
 
@@ -21,13 +43,19 @@ resolve(Message, Question) when is_record(Question, dns_query) ->
 	    Question#dns_query.type).
 
 resolve(Message, QName, QType) ->
-    Regexp = <<"^_(?<SERVICE>[a-zA-Z]+)\._(?<PROTOCOL>[a-zA-Z]+).(?<DOMAIN>.*)">>,
-    case re:run(QName, Regexp, [global, {capture, all, binary}]) of
-	{match, [[QName, Service, Protocol, _Domain]]} ->
-	    Nodes = registrator_nodes:lookup(Service, Protocol),
-	    resolve(Message#dns_message{ra = false, ad = false}, QName, QType, Nodes);
-	_ ->
-	    nxdomain(Message)
+    Zone = auth_zone(),
+    case in_zone(QName, Zone) of
+	false ->
+	    refused(Message);
+	true ->
+	    Regexp = <<"^_(?<SERVICE>[a-zA-Z]+)\._(?<PROTOCOL>[a-zA-Z]+).(?<DOMAIN>.*)">>,
+	    case re:run(QName, Regexp, [global, {capture, all, binary}]) of
+		{match, [[QName, Service, Protocol, _Domain]]} ->
+		    Nodes = registrator_nodes:lookup(Service, Protocol),
+		    resolve(Message#dns_message{ra = false, ad = false}, QName, QType, Nodes);
+		_ ->
+		    nxdomain(Message)
+	    end
     end.
 
 resolve(Message, _QName, _QType, []) ->
@@ -61,7 +89,7 @@ service_address_records(Message, QName, QType, Nodes) ->
 			end
 		end, Nodes),
     NewAnswers = Answers ++ Records,
-    Message#dns_message{answers = NewAnswers, anc = length(NewAnswers)}.
+    Message#dns_message{answers = NewAnswers, anc = length(NewAnswers), aa = true}.
 
 format_address_record({_, _, _, _} = Ip, QName, QType)
   when QType =:= ?DNS_TYPE_ANY; QType =:= ?DNS_TYPE_A ->
@@ -87,7 +115,7 @@ format_srv_records(Message, QName, _QType, Nodes) ->
 			   #dns_rr{name = QName, type = ?DNS_TYPE_SRV, ttl = 0, data = Data}
 		   end, Nodes),
     NewAnswers = Answers ++ SrvRecords,
-    Message#dns_message{answers = NewAnswers, anc = length(NewAnswers)}.
+    Message#dns_message{answers = NewAnswers, anc = length(NewAnswers), aa = true}.
 
 format_ip(Ip) when is_list(Ip) ->
     list_to_binary(Ip);
