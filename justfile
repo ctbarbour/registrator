@@ -1,5 +1,3 @@
-gar_registry := "europe-west2-docker.pkg.dev/soulbeet/soulbeet"
-gar_image := gar_registry + "/registrator"
 image := "registrator"
 
 default:
@@ -17,35 +15,6 @@ test: compile
 # Build image (no push)
 build tag="latest":
     podman build -t {{ image }}:{{ tag }} .
-
-# Build and publish to Artifact Registry. Pass "true" as second arg to also
-# tag :latest.
-publish tag="latest" also_latest="false": (build tag)
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ -z "${GAR_KEY_FILE:-}" ]; then
-        echo "FAIL: GAR_KEY_FILE not set"
-        echo "Run 'direnv allow' or check .envrc sops decryption"
-        exit 1
-    fi
-    IMAGE="{{ gar_image }}:{{ tag }}"
-    echo "==> Authenticating crane with Artifact Registry..."
-    crane auth login europe-west2-docker.pkg.dev -u _json_key -p "$(cat "${GAR_KEY_FILE}")"
-    echo "==> Saving image to tar..."
-    rm -f /tmp/registrator.tar
-    podman save "{{ image }}:{{ tag }}" -o /tmp/registrator.tar
-    echo "==> Pushing ${IMAGE}..."
-    crane push /tmp/registrator.tar "${IMAGE}"
-    rm -f /tmp/registrator.tar
-    echo "==> Published ${IMAGE}"
-    if [ "{{ also_latest }}" = "true" ]; then
-        echo "==> Tagging ${IMAGE} as latest..."
-        crane tag "${IMAGE}" latest
-        echo "==> Published {{ gar_image }}:latest"
-    fi
-
-# Build + publish a versioned release (e.g. `just release v1.2.3`) and tag :latest
-release version: (publish version "true")
 
 # Run the latest local image against the rootless podman socket.
 # Requires `systemctl --user start podman.socket` once.
