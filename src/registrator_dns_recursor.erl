@@ -35,7 +35,10 @@ try_recursors(OrigId, UpstreamId, Wire, [Rec | Rest]) ->
     end.
 
 do_forward(OrigId, UpstreamId, Wire, {Host, Port}) ->
-    {ok, Sock} = gen_udp:open(0, [binary, {active, false}, {recbuf, 4096}]),
+    case gen_udp:open(0, [binary, {active, false}, {recbuf, 4096}]) of
+        {error, OpenReason} ->
+            {error, {open_failed, OpenReason}};
+        {ok, Sock} ->
     try
         case gen_udp:send(Sock, Host, Port, Wire) of
             {error, Reason} ->
@@ -59,6 +62,7 @@ do_forward(OrigId, UpstreamId, Wire, {Host, Port}) ->
         end
     after
         gen_udp:close(Sock)
+    end
     end.
 
 validate_and_build(OrigId, UpstreamId, UpstreamMsg) ->
